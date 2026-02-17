@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Workflow Monitoring Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+    h1 { margin-top: 0; }
+    ul { max-height: 300px; overflow-y: auto; padding-left: 18px; }
+    li { margin-bottom: 6px; }
+    pre { max-height: 350px; overflow: auto; background: #f9f9f9; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Mini n8n Dashboard</h1>
+  <div class="grid">
+    <div class="card">
+      <h3>Running Instances</h3>
+      <ul id="running"></ul>
+    </div>
+    <div class="card">
+      <h3>Recent Dead Letters</h3>
+      <ul id="deadletters"></ul>
+    </div>
+    <div class="card">
+      <h3>Selected Timeline</h3>
+      <input id="instanceId" placeholder="Instance Guid" style="width:100%" />
+      <button id="loadTimeline">Load</button>
+      <pre id="timeline"></pre>
+    </div>
+  </div>
+
+  <script>
+    const runningEl = document.getElementById('running');
+    const deadlettersEl = document.getElementById('deadletters');
+    const timelineEl = document.getElementById('timeline');
+
+    function renderList(el, items, map) {
+      el.innerHTML = '';
+      items.forEach(i => {
+        const li = document.createElement('li');
+        li.textContent = map(i);
+        el.appendChild(li);
+      });
+    }
+
+    async function refresh() {
+      const running = await fetch('/api/instances?status=Running&take=25').then(r => r.json());
+      renderList(runningEl, running, i => `${i.id} | step=${i.currentStepId ?? '-'} | corr=${i.correlationId}`);
+      const dls = await fetch('/api/deadletters').then(r => r.json());
+      renderList(deadlettersEl, dls.slice(0, 25), d => `${d.workflowInstanceId} | ${d.reason}`);
+    }
+
+    document.getElementById('loadTimeline').onclick = async () => {
+      const id = document.getElementById('instanceId').value.trim();
+      if (!id) return;
+      const steps = await fetch(`/api/instances/${id}/steps`).then(r => r.json());
+      timelineEl.textContent = JSON.stringify(steps, null, 2);
+    };
+
+    const conn = new signalR.HubConnectionBuilder().withUrl('/hubs/workflows').build();
+    ['instanceUpdated','instanceCompleted','instanceFailed','stepStarted','stepSucceeded','stepWaiting']
+      .forEach(evt => conn.on(evt, async () => refresh()));
+
+    conn.start().then(refresh);
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
